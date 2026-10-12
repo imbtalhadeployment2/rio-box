@@ -183,6 +183,10 @@ app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d', fallthrough: true
 // Frontend files live next to server.js in this edition
 app.get('/app.js', (req, res) => res.sendFile(path.join(__dirname, 'app.js')));
 app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
+app.get('/manifest.json', (req, res) => res.sendFile(path.join(__dirname, 'manifest.json')));
+app.get('/sw.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'sw.js')));
+app.get('/icon-192.png', (req, res) => res.sendFile(path.join(__dirname, 'icon-192.png')));
+app.get('/icon-512.png', (req, res) => res.sendFile(path.join(__dirname, 'icon-512.png')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 // ---------------- Auth ----------------
