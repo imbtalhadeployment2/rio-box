@@ -41,6 +41,7 @@ img, video { display: block; max-width: 100%; }
   display: flex; align-items: center; justify-content: center;
   box-shadow: var(--shadow);
 }
+img.logo-mark { object-fit: cover; padding: 0; }
 .logo-text { font-weight: 800; font-size: 19px; letter-spacing: 1.5px; }
 .search { flex: 1; max-width: 720px; }
 .search input {
@@ -98,13 +99,15 @@ img, video { display: block; max-width: 100%; }
 .pin-card:hover { transform: translateY(-2px); }
 .pin-media { position: relative; background: #e9e9e7; }
 .pin-media img, .pin-media video { width: 100%; height: auto; }
-.pin-save-hint {
-  position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center;
-  padding-bottom: 12px; opacity: 0; transition: opacity 0.15s;
-  background: linear-gradient(to top, rgba(0,0,0,0.45), transparent 55%);
-  color: #fff; font-weight: 700; font-size: 14px;
+.pin-save-btn {
+  position: absolute; top: 10px; right: 10px;
+  background: var(--red); color: #fff; font-weight: 700; font-size: 14px;
+  padding: 9px 18px; border-radius: 999px; text-decoration: none;
+  opacity: 0; transform: translateY(-4px); transition: opacity 0.15s, transform 0.15s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
-.pin-card:hover .pin-save-hint { opacity: 1; }
+.pin-card:hover .pin-save-btn { opacity: 1; transform: none; }
+.pin-save-btn:hover { background: var(--red-dark); }
 .pin-meta { padding: 10px 12px 12px; }
 .pin-title { font-weight: 700; font-size: 14px; line-height: 1.35; }
 .pin-user { display: flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 13px; color: var(--muted); }
@@ -214,3 +217,37 @@ img, video { display: block; max-width: 100%; }
   #app { padding: 14px 12px 50px; }
   .logo-text { display: none; }
 }
+
+/* ---------- Social login ---------- */
+.oauth-divider {
+  display: flex; align-items: center; gap: 12px;
+  margin: 20px 0 4px; color: var(--muted); font-size: 13px;
+}
+.oauth-divider::before, .oauth-divider::after {
+  content: ""; flex: 1; height: 1px; background: var(--line);
+}
+.oauth-btns { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.oauth-btn {
+  background: #fff; border: 1px solid var(--line); color: var(--ink);
+  width: 100%; padding: 11px 18px; font-weight: 600;
+}
+.oauth-btn:hover { background: #fafafa; border-color: #d5d5d2; }
+.oauth-btn svg { flex-shrink: 0; }
+
+/* ---------- Settings ---------- */
+.settings-h {
+  font-size: 17px; font-weight: 800; margin: 26px 0 12px;
+  padding-bottom: 8px; border-bottom: 2px solid var(--red);
+}
+.settings-h:first-of-type { margin-top: 18px; }
+.muted-note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+/* ---------- Red & white polish ---------- */
+.logo-text { color: var(--red-dark); }
+.section-title { color: var(--ink); }
+#siteHeader { background: #ffffff; }
+body { background: #ffffff; }
+.pin-card, .board-card, .form-card { border: 1px solid var(--line); }
+.btn-primary { background: var(--red); }
+a { color: var(--red-dark); }
+.pin-title { color: var(--ink); }

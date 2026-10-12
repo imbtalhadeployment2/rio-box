@@ -50,6 +50,7 @@ function updateHeader() {
       <a class="btn" href="#/">Home</a>
       <a class="btn" href="#/upload">+ Create</a>
       <a class="btn btn-ghost" href="#/boards">Boards</a>
+      <a class="btn btn-ghost" href="#/settings" title="Settings">⚙</a>
       <a href="#/user/${esc(me.username)}" title="${esc(me.username)}">${avatarHtml(me, 38)}</a>
       <button class="btn btn-ghost" id="logoutBtn">Log out</button>`;
     $('#logoutBtn').addEventListener('click', async () => {
@@ -74,6 +75,17 @@ $('#searchForm').addEventListener('submit', (e) => {
 
 /* ---------------- shared bits ---------------- */
 
+const googleSvg = `<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.3H12v4.1h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.7 2.9c2.3-2.1 3.6-5.1 3.6-8.5z"/><path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.7-2.9c-1 .7-2.4 1.2-4.2 1.2-3.2 0-5.9-2.1-6.8-5l-3.9 3C3.3 21.3 7.3 24 12 24z"/><path fill="#FBBC05" d="M5.2 14.4c-.2-.7-.4-1.5-.4-2.4s.1-1.7.4-2.4l-3.9-3C.5 8.2 0 10 0 12s.5 3.8 1.3 5.4l3.9-3z"/><path fill="#EA4335" d="M12 4.7c1.8 0 3 .8 3.7 1.4l3.3-3.2C17.9 1.1 15.2 0 12 0 7.3 0 3.3 2.7 1.3 6.6l3.9 3c.9-2.8 3.6-4.9 6.8-4.9z"/></svg>`;
+const facebookSvg = `<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#1877F2" d="M24 12a12 12 0 1 0-13.9 11.9v-8.4h-3v-3.5h3V9.4c0-3 1.8-4.7 4.5-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-2 1-2 1.9V12h3.3l-.5 3.5h-2.8v8.4A12 12 0 0 0 24 12z"/></svg>`;
+
+let oauthProviders = null;
+async function getProviders() {
+  if (oauthProviders) return oauthProviders;
+  try { oauthProviders = await api('GET', '/api/auth/providers'); }
+  catch (e) { oauthProviders = { google: false, facebook: false }; }
+  return oauthProviders;
+}
+
 function mediaTag(p, inCard) {
   if (p.media_type === 'video') {
     return `<video src="${esc(p.media)}" ${inCard ? 'muted playsinline preload="metadata"' : 'controls playsinline'}></video>` +
@@ -86,7 +98,7 @@ function pinCard(p, opts = {}) {
   return `<div class="pin-card">
     ${opts.showRemove ? `<button class="btn btn-danger remove-pin" data-remove-pin="${p.id}">Remove</button>` : ''}
     <a href="#/pin/${p.id}" style="text-decoration:none;color:inherit">
-      <div class="pin-media">${mediaTag(p, true)}<span class="pin-save-hint">Open pin</span></div>
+      <div class="pin-media">${mediaTag(p, true)}<span class="pin-save-btn">Save</span></div>
       <div class="pin-meta">
         <div class="pin-title">${esc(p.title)}</div>
         <div class="pin-user">${avatarHtml(p.user, 24)}<span>${esc(p.user.username)}</span>
@@ -323,6 +335,7 @@ function authForm(app, mode) {
       <button class="btn btn-primary" type="submit" style="width:100%">${isLogin ? 'Log in' : 'Sign up'}</button>
     </form>
     <div class="switch">${isLogin ? 'New to RIO BOX? <a href="#/signup">Sign up</a>' : 'Already have an account? <a href="#/login">Log in</a>'}</div>
+    <div id="oauthZone"></div>
   </div>`;
   $('#authForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -336,6 +349,20 @@ function authForm(app, mode) {
       location.hash = '#/';
     } catch (ex) { err.textContent = ex.message; err.style.display = 'block'; }
   });
+  // Social login buttons (only for providers the server has configured)
+  getProviders().then((prov) => {
+    const zone = $('#oauthZone');
+    if (!zone) return;
+    const btns = [];
+    if (prov.google) btns.push(`<a class="btn oauth-btn" href="/api/auth/google">${googleSvg}<span>Continue with Google</span></a>`);
+    if (prov.facebook) btns.push(`<a class="btn oauth-btn" href="/api/auth/facebook">${facebookSvg}<span>Continue with Facebook</span></a>`);
+    if (btns.length) zone.innerHTML = `<div class="oauth-divider"><span>or</span></div><div class="oauth-btns">${btns.join('')}</div>`;
+  });
+  if (location.hash.includes('oauth=error')) {
+    const err = $('#authErr');
+    err.textContent = 'Social login failed. Please try again or use your password.';
+    err.style.display = 'block';
+  }
 }
 
 async function renderProfile(app, username) {
@@ -455,6 +482,78 @@ async function renderBoard(app, id) {
   });
 }
 
+/* ---------------- settings ---------------- */
+
+async function renderSettings(app) {
+  if (!me) { location.hash = '#/login'; return; }
+  app.innerHTML = `
+  <div class="form-card" style="max-width:620px">
+    <h1>Settings</h1>
+    <h3 class="settings-h">Profile</h3>
+    <form id="setBioForm" class="save-row">
+      <input id="setBioInput" class="text-input" maxlength="500" placeholder="Your bio…" value="${esc(me.bio || '')}">
+      <button class="btn btn-primary" type="submit">Save</button>
+    </form>
+    <form id="setAvatarForm" class="save-row" style="margin-top:10px">
+      <input type="file" id="setAvatarInput" accept="image/jpeg,image/png,image/webp,image/gif" class="text-input">
+      <button class="btn" type="submit">Update photo</button>
+    </form>
+    <h3 class="settings-h">Change password</h3>
+    <div class="form-error" id="pwErr" style="display:none"></div>
+    <form id="pwForm">
+      <div class="field"><label>Current password</label><input id="pwCur" type="password" class="text-input" autocomplete="current-password" placeholder="••••••"></div>
+      <div class="field"><label>New password</label><input id="pwNew" type="password" class="text-input" minlength="6" autocomplete="new-password" placeholder="At least 6 characters"></div>
+      <button class="btn btn-primary" type="submit">Update password</button>
+    </form>
+    <h3 class="settings-h">Account</h3>
+    <div class="save-row">
+      <button class="btn" id="setLogoutBtn">Log out</button>
+      <button class="btn btn-danger" id="delAccountBtn">Delete my account</button>
+    </div>
+    <p class="muted-note">Deleting your account permanently removes your profile, pins, boards and comments.</p>
+  </div>`;
+
+  $('#setBioForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const d = await api('PUT', '/api/users/me', { bio: $('#setBioInput').value });
+      me = d.user; alert('Bio saved.');
+    } catch (err) { alert(err.message); }
+  });
+  $('#setAvatarForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = $('#setAvatarInput').files[0];
+    if (!f) return;
+    const fd = new FormData(); fd.append('avatar', f);
+    try {
+      const d = await api('POST', '/api/users/me/avatar', fd, true);
+      me.avatar = d.avatar; updateHeader(); alert('Photo updated.');
+    } catch (err) { alert(err.message); }
+  });
+  $('#pwForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('#pwErr');
+    err.style.display = 'none'; err.style.color = '';
+    try {
+      await api('POST', '/api/users/me/password', { currentPassword: $('#pwCur').value, newPassword: $('#pwNew').value });
+      $('#pwCur').value = ''; $('#pwNew').value = '';
+      err.style.color = '#1a7f37'; err.textContent = 'Password updated.'; err.style.display = 'block';
+    } catch (ex) { err.textContent = ex.message; err.style.display = 'block'; }
+  });
+  $('#setLogoutBtn').addEventListener('click', async () => {
+    await api('POST', '/api/auth/logout');
+    me = null; updateHeader(); location.hash = '#/';
+  });
+  $('#delAccountBtn').addEventListener('click', async () => {
+    if (!confirm('Delete your account and everything in it? This cannot be undone.')) return;
+    if (!confirm('Last chance — really delete?')) return;
+    try {
+      await api('DELETE', '/api/users/me');
+      me = null; updateHeader(); location.hash = '#/';
+    } catch (err) { alert(err.message); }
+  });
+}
+
 /* ---------------- router ---------------- */
 
 async function route() {
@@ -474,6 +573,7 @@ async function route() {
     if (parts[0] === 'user' && parts[1]) return await renderProfile(app, decodeURIComponent(parts[1]));
     if (parts[0] === 'boards') return await renderBoards(app);
     if (parts[0] === 'board' && parts[1]) return await renderBoard(app, parts[1]);
+    if (parts[0] === 'settings') return await renderSettings(app);
     app.innerHTML = errorHtml(new Error('Page not found.'));
   } catch (e) {
     app.innerHTML = errorHtml(e);

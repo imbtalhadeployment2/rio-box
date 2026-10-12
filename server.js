@@ -474,6 +474,180 @@ app.delete('/api/boards/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------------- OAuth login (Google + Facebook) ----------------
+const crypto = require('crypto');
+
+function oauthConfigured(provider) {
+  if (provider === 'google') return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+  if (provider === 'facebook') return !!(process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET);
+  return false;
+}
+
+// OAuth account columns (safe to run on every boot)
+for (const col of ['google_id', 'facebook_id']) {
+  try { db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`); } catch (e) { /* already there */ }
+}
+try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google ON users(google_id)'); } catch (e) {}
+try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_facebook ON users(facebook_id)'); } catch (e) {}
+
+function appBaseUrl(req) {
+  return (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+}
+
+function uniqueUsername(base) {
+  let name = String(base || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16) || 'user';
+  if (name.length < 3) name = (name + 'user').slice(0, 20);
+  let candidate = name, i = 1;
+  while (db.prepare('SELECT id FROM users WHERE lower(username) = lower(?)').get(candidate)) {
+    i += 1;
+    candidate = (name + i).slice(0, 20);
+  }
+  return candidate;
+}
+
+function findOrCreateOAuthUser(provider, pid, email, name) {
+  const col = provider === 'google' ? 'google_id' : 'facebook_id';
+  let user = db
+    .prepare(`SELECT id, username, bio, avatar_path, created_at FROM users WHERE ${col} = ?`)
+    .get(pid);
+  if (user) return user;
+  const username = uniqueUsername((name || '').split(' ')[0] || (email || '').split('@')[0]);
+  const hash = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 10);
+  const info = db
+    .prepare(`INSERT INTO users (username, password_hash, ${col}) VALUES (?, ?, ?)`)
+    .run(username, hash, pid);
+  return db
+    .prepare('SELECT id, username, bio, avatar_path, created_at FROM users WHERE id = ?')
+    .get(info.lastInsertRowid);
+}
+
+app.get('/api/auth/providers', (req, res) => {
+  res.json({ google: oauthConfigured('google'), facebook: oauthConfigured('facebook') });
+});
+
+// ---- Google ----
+app.get('/api/auth/google', (req, res) => {
+  if (!oauthConfigured('google')) return res.status(400).json({ error: 'Google login is not set up yet.' });
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.oauthState = state;
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    redirect_uri: `${appBaseUrl(req)}/api/auth/google/callback`,
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    prompt: 'select_account',
+  });
+  res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + params.toString());
+});
+
+app.get('/api/auth/google/callback', async (req, res) => {
+  try {
+    if (!oauthConfigured('google')) throw new Error('not-configured');
+    const { code, state } = req.query;
+    if (!code || !state || state !== req.session.oauthState) throw new Error('bad-state');
+    delete req.session.oauthState;
+    const tokRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: `${appBaseUrl(req)}/api/auth/google/callback`,
+        grant_type: 'authorization_code',
+      }),
+    });
+    const tok = await tokRes.json();
+    if (!tok.access_token) throw new Error('token-failed');
+    const meRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: `Bearer ${tok.access_token}` },
+    });
+    const profile = await meRes.json();
+    if (!profile.sub) throw new Error('profile-failed');
+    const user = findOrCreateOAuthUser('google', profile.sub, profile.email, profile.name);
+    req.session.userId = user.id;
+    res.redirect('/');
+  } catch (e) {
+    res.redirect('/#/login?oauth=error');
+  }
+});
+
+// ---- Facebook ----
+app.get('/api/auth/facebook', (req, res) => {
+  if (!oauthConfigured('facebook')) return res.status(400).json({ error: 'Facebook login is not set up yet.' });
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.oauthState = state;
+  const params = new URLSearchParams({
+    client_id: process.env.FACEBOOK_APP_ID,
+    redirect_uri: `${appBaseUrl(req)}/api/auth/facebook/callback`,
+    scope: 'email,public_profile',
+    state,
+  });
+  res.redirect('https://www.facebook.com/v18.0/dialog/oauth?' + params.toString());
+});
+
+app.get('/api/auth/facebook/callback', async (req, res) => {
+  try {
+    if (!oauthConfigured('facebook')) throw new Error('not-configured');
+    const { code, state } = req.query;
+    if (!code || !state || state !== req.session.oauthState) throw new Error('bad-state');
+    delete req.session.oauthState;
+    const tokRes = await fetch(
+      'https://graph.facebook.com/v18.0/oauth/access_token?' +
+        new URLSearchParams({
+          client_id: process.env.FACEBOOK_APP_ID,
+          client_secret: process.env.FACEBOOK_APP_SECRET,
+          redirect_uri: `${appBaseUrl(req)}/api/auth/facebook/callback`,
+          code,
+        })
+    );
+    const tok = await tokRes.json();
+    if (!tok.access_token) throw new Error('token-failed');
+    const meRes = await fetch(
+      'https://graph.facebook.com/me?fields=id,name,email&access_token=' + encodeURIComponent(tok.access_token)
+    );
+    const profile = await meRes.json();
+    if (!profile.id) throw new Error('profile-failed');
+    const user = findOrCreateOAuthUser('facebook', profile.id, profile.email, profile.name);
+    req.session.userId = user.id;
+    res.redirect('/');
+  } catch (e) {
+    res.redirect('/#/login?oauth=error');
+  }
+});
+
+// ---------------- Account settings ----------------
+app.post('/api/users/me/password', requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters.' });
+  }
+  const row = db.prepare('SELECT password_hash, google_id, facebook_id FROM users WHERE id = ?').get(req.user.id);
+  const okCurrent = currentPassword && bcrypt.compareSync(currentPassword, row.password_hash);
+  const isOAuth = !!(row.google_id || row.facebook_id);
+  if (!okCurrent && !isOAuth) return res.status(400).json({ error: 'Current password is incorrect.' });
+  const hash = bcrypt.hashSync(newPassword, 10);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.user.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/users/me', requireAuth, (req, res) => {
+  const pins = db.prepare('SELECT media_path FROM pins WHERE user_id = ?').all(req.user.id);
+  const meRow = db.prepare('SELECT avatar_path FROM users WHERE id = ?').get(req.user.id);
+  db.prepare('DELETE FROM users WHERE id = ?').run(req.user.id);
+  for (const p of pins) {
+    try { fs.unlinkSync(path.join(UPLOAD_DIR, p.media_path)); } catch (e) {}
+  }
+  if (meRow && meRow.avatar_path) {
+    try { fs.unlinkSync(path.join(UPLOAD_DIR, meRow.avatar_path)); } catch (e) {}
+  }
+  req.session.destroy(() => {
+    res.clearCookie('riobox.sid');
+    res.json({ ok: true });
+  });
+});
+
 // ---------------- Health, 404, SPA fallback ----------------
 app.get('/api/health', (req, res) => res.json({ ok: true, app: 'RIO BOX' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
